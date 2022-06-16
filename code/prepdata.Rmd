@@ -1,0 +1,90 @@
+```{r}
+library(pacman)
+p_load(data.table, dplyr, ggplot2, foreach, 
+GenomicRanges, yaml, purrr, fs, stringr, tximport, edgeR)
+outdatadir <- "output/code/prepdata/"
+```
+
+```{r}
+
+dparameter <- list(
+    readLength = 80,
+adapter5Seq = "^GTTACATCTGGTAGTCAGTCTCCAAACCACACAAAAA",
+adapter5Error = 0.1,
+adapter3Seq = "AGATTGGAAGAGTGTCATGTAGGGAAAGAGTG",
+adapter3Error = 0.1,
+trimQuality = 20,
+trimLength = 15,
+mapQuality = 30,
+distanceToCG = 3,
+outdatadir = outdatadir,
+outputRDS = paste0(outdatadir, "fileRDS/"),
+core = 6,
+path_to_humam_genome = "/scratch/store/annotations/HomoSapiens_hg19/genome/genome.fa",
+path2CG = "/scratch/store/annotations/HomoSapiens_hg19/dCG.RDS",
+minOverlap = 10,
+NumberOfThreads = 20,
+Overhang = 99,
+path_to_humam_genome_star = paste0(outdatadir, "human_genome")
+)
+# removeFixed <- c(0, 10, 30, 50)
+#  removeFixed <- c(0, 10, 30, 50, 70, 90) # -u funkcija
+#  removeFixed <- c(101, 76, 51, 41, 31) # --length funkcija
+```
+
+```{r}
+make_fastq <- function(sample, parameter = dparameter) {
+    inFile <- paste0("./input/", sample$sampleID, ".fastq.gz")
+    outFile <- parameter$outdatadir
+    htmlFile <- paste0(parameter$outdatadir, sample$sampleID, "_fastqc.html")
+    cmd <- paste0("fastqc -t ", parameter$core, " ", inFile, " -o ", outFile)
+    if(!(file.exists(htmlFile))) {
+    system(cmd) }
+    sample$fastq <- inFile
+    return(sample)
+}
+```
+
+
+```{r}
+cut_adapter_3 <- function(sample, parameter = dparameter) {
+  inFile <- sample$fastq
+  outFile <- paste0(parameter$outdatadir, "a3_", sample$sampleID, ".fastq.gz")
+    cmd <- paste0("cutadapt ",  
+            " -a ", parameter$adapter3Seq,  
+            " -j ", parameter$core,
+            " -o ", outFile, " ", inFile)
+    if(!(file.exists(outFile))) {
+    system(cmd) }
+    sample$adapter3 <- outFile
+    return(sample)
+ }
+```
+
+```{r}
+star_index <- function(sample, parameter = dparameter) {
+  outFile <- paste0(parameter$outdatadir, "index_", sample$sampleID)
+  cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads,
+                      " --runMode ", 
+                      "--genomeDir ", outFile,
+                      " --genomeFastaFiles ", parameter$path_to_humam_genome,
+                      " --sjdbOverhang", parameter$Overhang)
+  if(!(file.exists(outFile))) {
+    system(cmd) }
+    sample$index <- outFile
+    return(sample)
+}
+
+star_mapping <- function(sample, parameter = dparameter) {
+  inFile <- sample$adapter3
+  outFile <- paste0(parameter$outdatadir, "star_", sample$sampleID)
+   cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads, 
+                      " --genomeDir ", parameter$path_to_humam_genome_star,
+                      " --readFilesIn ", inFile,
+                      " --outFileNamePrefix ", outFile)
+  if(!(file.exists(outFile))) {
+    system(cmd) }
+    sample$star <- outFile
+    return(sample)
+}
+```
