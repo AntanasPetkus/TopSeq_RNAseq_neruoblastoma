@@ -8,7 +8,7 @@ outdatadir <- "output/code/prepdata/"
 ```{r}
 
 dparameter <- list(
-    readLength = 80,
+    readLength = 15,
 adapter5Seq = "^GTTACATCTGGTAGTCAGTCTCCAAACCACACAAAAA",
 adapter5Error = 0.1,
 adapter3Seq = "AGATTGGAAGAGTGTCATGTAGGGAAAGAGTG",
@@ -53,6 +53,7 @@ cut_adapter_3 <- function(sample, parameter = dparameter) {
     cmd <- paste0("cutadapt ",  
             " -a ", parameter$adapter3Seq,  
             " -j ", parameter$core,
+            " --minimum-length ", parameter$readLength,
             " -o ", outFile, " ", inFile)
     if(!(file.exists(outFile))) {
     system(cmd) }
@@ -75,16 +76,133 @@ star_index <- function(sample, parameter = dparameter) {
     return(sample)
 }
 
+## SAM failas 
 star_mapping <- function(sample, parameter = dparameter) {
   inFile <- sample$adapter3
-  outFile <- paste0(parameter$outdatadir, "star_", sample$sampleID)
+  outFile <- paste0(parameter$outdatadir, "star_", sample$sampleID, "Aligned.out.sam")
    cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads, 
                       " --genomeDir ", parameter$path_to_humam_genome_star,
                       " --readFilesIn ", inFile,
-                      " --outFileNamePrefix ", outFile)
-  if(!(file.exists(outFile))) {
+                      " --quantMode TranscriptomeSAM",
+                      " --outFileNamePrefix ", outFile, 
+                      " --readFilesCommand zcat")
+  if(!(file.exists(paste0(outFile)))) {
     system(cmd) }
     sample$star <- outFile
     return(sample)
 }
 ```
+
+
+```{r}
+## BAM failas sorted
+star_mapping <- function(sample, parameter = dparameter) {
+  inFile <- sample$adapter3
+  outFile <- paste0(parameter$outdatadir, "star_", sample$sampleID, "Aligned.sortedByCoord.out.bam")
+   cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads, 
+                      " --genomeDir ", parameter$path_to_humam_genome_star,
+                      " --outSAMtype BAM SortedByCoordinate",
+                      " --readFilesIn ", inFile,
+                      " --outFileNamePrefix ", outFile, 
+                      " --readFilesCommand zcat ")
+  if(!(file.exists(paste0(outFile)))) {
+    system(cmd) }
+    sample$star <- outFile
+    return(sample)
+}
+```
+
+```{r}
+## BAM failas ne sorted
+star_mapping <- function(sample, parameter = dparameter) {
+  inFile <- sample$adapter3
+  outFile <- paste0(parameter$outdatadir, "star_", sample$sampleID, "Aligned.out.bam")
+  outFile2 <- paste0(parameter$outdatadir, "star_", sample$sampleID)
+   cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads, 
+                      " --genomeDir ", parameter$path_to_humam_genome_star,
+                      " --outSAMtype BAM Unsorted --outFilterScoreMinOverLread 0.3 --outFilterMatchNminOverLread 0.3 --readFilesIn ", inFile,
+                      " --outFileNamePrefix ", outFile2, 
+                      " --readFilesCommand zcat ")
+  if(!(file.exists(paste0(outFile)))) {
+    system(cmd) }
+    sample$star <- outFile
+    return(sample)
+}
+
+```
+"--outFilterScoreMinOverLread 0.3 
+                       --outFilterMatchNminOverLread 0.3 
+                        --quantMode TranscriptomeSAM"
+```{r}
+bam_sort <- function(sample, parameter = dparameter) {
+    inFile <- sample$star
+    outFile <- paste0(parameter$outdatadir, "star_", sample$sampleID, "Sorted.bam")
+    cmd <- paste0("samtools sort -@ ", parameter$core, " ", inFile,
+            " | samtools view -b -@ ", parameter$core, 
+            " -q ", parameter$mapQuality, #######
+            " -F 4 -o ", outFile, " - ") ######
+    if(!(file.exists(outFile))) {
+        system(cmd)}
+    cmd2 <- paste0("samtools index ", outFile) 
+        system(cmd2)
+    sample$sort <- outFile
+    return(sample)
+}
+
+convert_to_bed <- function(sample, parameter = dparameter) {
+    inFile <- sample$sort
+    outFile <- paste0(parameter$outdatadir, "star_", sample$sampleID, ".bed")
+    cmd <- paste0("bedtools bamtobed -i ", inFile, 
+            " > ", outFile)
+    if(!(file.exists(outFile))) {
+        system(cmd)}
+    sample$beded <- outFile
+    return(sample)
+}
+
+
+mergeLengthReads <- function(sample, parameter = dparameter) {
+    inFile <- sample$beded
+    outFile <- paste0(parameter$outputRDS, "mergeReads_", sample$sampleID, ".Rds")
+    if(!(file.exists(outFile))) {
+    lentele <- fread(inFile)
+    i <- table(lentele$V4)
+    goodID <- names(i[i == 1])
+    gLentele <- lentele[V4 %in% goodID, ]
+    setnames(gLentele, c("chr", "start", "end", "read", "mapq", "strand")) 
+     dMain <- paste0("zcat ", inFile2, " | paste - - - - | awk '{print ($1), length($3)}'") %>%
+    fread() %>%
+    setkey(V1)
+    dMain[, V1:=gsub("^@", "", V1)]
+    full_table <- dMain [V1 %in% goodID] %>%
+    setnames(c("read", "length")) %>%
+    merge(gLentele, "read") %>%
+    setkey(chr, start, strand, length)
+        saveRDS(full_table, outFile)}
+    sample$merge <- outFile
+    return(sample)
+}
+
+
+
+
+```
+
+```{r}
+samplas <- yaml.load_file("input/samples.yaml")
+```
+
+```{r}
+for (i in 1:length(samplas)) {
+    make_fastq(samplas[[i]])  %>%
+        cut_adapter_3() %>% 
+        star_mapping()}
+
+        make_fastq(samplas[[2]]) %>%
+        cut_adapter_3() %>% 
+        star_mapping()
+        
+         %>% bam_sort() %>% 
+        convert_to_bed() %>% mergeLengthReads 
+```
+
