@@ -116,9 +116,9 @@ convert_to_bed <- function(sample, parameter = dparameter) {
 
 mergeLengthReads <- function(sample, parameter = dparameter) {
     inFile <- sample$beded
-    outFile1 <- paste0(parameter$outputRDS, "mapped_", sample$sampleID, ".Rds") ######
-    outFile2 <- paste0(parameter$outputRDS, "unmapped_", sample$sampleID, ".Rds")######
-    outFile3 <- paste0(parameter$outputRDS, "allReads_", sample$sampleID, ".Rds")####
+    outFile1 <- paste0(parameter$outputRDS, "mapped_", sample$sampleID, ".Rds") 
+    outFile2 <- paste0(parameter$outputRDS, "unmapped_", sample$sampleID, ".Rds")
+    outFile3 <- paste0(parameter$outputRDS, "allReads_", sample$sampleID, ".Rds")
     if(!(file.exists(outFile1))) {
     gLentele <- fread(inFile)
     gLentele <- gLentele[!duplicated(gLentele$V4),]
@@ -137,9 +137,9 @@ mergeLengthReads <- function(sample, parameter = dparameter) {
     setkey(chr, start, strand, length) 
         unmapped <- dMain %>%
     anti_join(., mapped, by = "read") 
-    saveRDS(mapped, outFile1)
-    saveRDS(unmapped, outFile2)
-    saveRDS(dMain, outFile3)}
+    saveRDS(mapped, outFile1) ### visi sumapinti readai
+    saveRDS(unmapped, outFile2) ### visi nesumapinti readai
+    saveRDS(dMain, outFile3)} ### visi readai pries mapinima
     sample$mapped <- outFile1
     sample$unmapped <- outFile2
     sample$allReads <- outFile3
@@ -153,20 +153,20 @@ makeDT <- function(sample, parameter = dparameter) {
     inFile3 <- sample$allReads
     outFile <- paste0(parameter$outputRDS, "fractionDT_", sample$sampleID, ".Rds")
      if(!(file.exists(outFile))) {
-  mapped <- readRDS(inFile1) %>%
+  mapped <- readRDS(inFile1) %>% ### atskiriu uniq mapintus ir multimapintus 
           select(read, mapq, length) %>% 
           mutate(is_uniq = if_else(
                   mapq == 255,
                   true = "yes",
                   false = "no"
-    )) %>% select(read, length, is_uniq)
+    )) %>% select(read, length, is_uniq) 
         
-  unmapped <- readRDS(inFile2) %>%
+  unmapped <- readRDS(inFile2) %>% ### paruosiu unmapped sujungimui su mapped
           anti_join(., mapped, by = "read") %>% 
           select(read, length) %>% 
           mutate(is_uniq = "no")
 
-  star_count <- bind_rows("yes" = mapped,
+  star_count <- bind_rows("yes" = mapped, ## nuskaitymu intervalu dazniai po star 
                      "no" = unmapped,
                      .id = "is_mapped")  %>% 
                 mutate(
@@ -185,7 +185,7 @@ makeDT <- function(sample, parameter = dparameter) {
                       length >= 200 ~ "+200")) %>% 
                 count(status, interval_length) %>%
                 setnames(c("status", "interval_length", "galutine_suma"))
-  interval_count <- readRDS(inFile3) %>% 
+  interval_count <- readRDS(inFile3) %>% ### visi nuskaitymu intervalu dazniai pries star
                 mutate(
                 interval_length = case_when(
                       length <= 30 ~ "-30",
@@ -196,7 +196,8 @@ makeDT <- function(sample, parameter = dparameter) {
                       length >= 200 ~ "+200")) %>% 
                 count(interval_length) %>% 
                 setnames(c("interval_length", "pradine_suma"))
-    full_fraction <- star_count %>% merge(interval_count, "interval_length") %>% 
+    full_fraction <- star_count %>% merge(interval_count, "interval_length") %>% ## frakcija parodanti kiek 
+    ### konkretaus intervalo nuskaitymu tapo tam tikra grupe is visu tokio ilgio nuskaitymu
   mutate(fraction = galutine_suma / pradine_suma ) %>% mutate(meginys = str_extract(
     sample$sampleID, "\\d{3}R"))
   saveRDS(full_fraction, outFile) }
@@ -217,32 +218,31 @@ for (i in 1:length(samplas)) {
         star_mapping() %>% 
         bam_sort() %>%
         convert_to_bed() %>%
-        mergeLengthReads()}
+        mergeLengthReads() %>% 
+        makeDT() }
 
-        make_fastq(samplas[[1]]) %>%
-        cut_adapter_3() %>% 
-        star_mapping() %>% bam_sort() %>% 
-        convert_to_bed() %>% mergeLengthReads() %>% makeDT()
+       
 ```
 
 
-
-
-
-
-
+# Grafikas 
 
 ```{r}
-outputRDS <- "output/code/prepdata/fileRDS/"
-outFile <- paste0(outpurRDS, "FullTable.Rds")
+outputRDS <- "output/code/prepdata/fileRDS/" ## sujungiami
+outFile <- paste0(outputRDS, "FullTable.Rds")
         file_names <-
     fs::dir_ls(outputRDS, regexp = "fractionDT_")
-    dt <- foreach(j = file_names, .combine = 'rbind') %do% {
-        readRDS(j)
+    dt <- foreach(i = file_names, .combine = 'rbind') %do% {
+        readRDS(i)
     }
+saveRDS(dt, outFile)
 
-full_fraction$interval_length <- factor(full_fraction$interval_length, 
+dt <- readRDS(outFile)
+
+dt$interval_length <- factor(dt$interval_length, 
     levels = c("-30", "30-50", "50-100", "100-150", "150-200", "+200"))
-ggplot(full_fraction, aes(x = interval_length, y = fraction, color = status, group = status)) + 
-    geom_line() + geom_point()
+ggplot(dt, aes(x = interval_length, y = fraction, color = status, group = status)) + 
+    geom_line() + geom_point() +  facet_grid(rows = vars(meginys)) + theme_bw() + 
+      scale_color_brewer(palette = "Dark2")
+      
 ```
