@@ -43,10 +43,7 @@ make_fastq <- function(sample, parameter = dparameter) {
     sample$fastq <- inFile
     return(sample)
 }
-```
 
-
-```{r}
 cut_adapter_3 <- function(sample, parameter = dparameter) {
   inFile <- sample$fastq
   outFile <- paste0(parameter$outdatadir, "a3_", sample$sampleID, ".fastq.gz")
@@ -60,9 +57,7 @@ cut_adapter_3 <- function(sample, parameter = dparameter) {
     sample$adapter3 <- outFile
     return(sample)
  }
-```
 
-```{r}
 star_index <- function(sample, parameter = dparameter) {
   outFile <- paste0(parameter$outdatadir, "index_", sample$sampleID)
   cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads,
@@ -76,43 +71,7 @@ star_index <- function(sample, parameter = dparameter) {
     return(sample)
 }
 
-## SAM failas 
-star_mapping <- function(sample, parameter = dparameter) {
-  inFile <- sample$adapter3
-  outFile <- paste0(parameter$outdatadir, "star_", sample$sampleID, "Aligned.out.sam")
-   cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads, 
-                      " --genomeDir ", parameter$path_to_humam_genome_star,
-                      " --readFilesIn ", inFile,
-                      " --quantMode TranscriptomeSAM",
-                      " --outFileNamePrefix ", outFile, 
-                      " --readFilesCommand zcat")
-  if(!(file.exists(paste0(outFile)))) {
-    system(cmd) }
-    sample$star <- outFile
-    return(sample)
-}
-```
 
-
-```{r}
-## BAM failas sorted
-star_mapping <- function(sample, parameter = dparameter) {
-  inFile <- sample$adapter3
-  outFile <- paste0(parameter$outdatadir, "star_", sample$sampleID, "Aligned.sortedByCoord.out.bam")
-   cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads, 
-                      " --genomeDir ", parameter$path_to_humam_genome_star,
-                      " --outSAMtype BAM SortedByCoordinate",
-                      " --readFilesIn ", inFile,
-                      " --outFileNamePrefix ", outFile, 
-                      " --readFilesCommand zcat ")
-  if(!(file.exists(paste0(outFile)))) {
-    system(cmd) }
-    sample$star <- outFile
-    return(sample)
-}
-```
-
-```{r}
 ## BAM failas ne sorted
 star_mapping <- function(sample, parameter = dparameter) {
   inFile <- sample$adapter3
@@ -129,22 +88,17 @@ star_mapping <- function(sample, parameter = dparameter) {
     return(sample)
 }
 
-```
-"--outFilterScoreMinOverLread 0.3 
-                       --outFilterMatchNminOverLread 0.3 
-                        --quantMode TranscriptomeSAM"
-```{r}
+
 bam_sort <- function(sample, parameter = dparameter) {
     inFile <- sample$star
     outFile <- paste0(parameter$outdatadir, "star_", sample$sampleID, "Sorted.bam")
     cmd <- paste0("samtools sort -@ ", parameter$core, " ", inFile,
             " | samtools view -b -@ ", parameter$core, 
-            " -q ", parameter$mapQuality, #######
-            " -F 4 -o ", outFile, " - ") ######
+           " -o ", outFile, " - ") 
     if(!(file.exists(outFile))) {
-        system(cmd)}
+        system(cmd)
     cmd2 <- paste0("samtools index ", outFile) 
-        system(cmd2)
+        system(cmd2)}
     sample$sort <- outFile
     return(sample)
 }
@@ -160,31 +114,95 @@ convert_to_bed <- function(sample, parameter = dparameter) {
     return(sample)
 }
 
-
 mergeLengthReads <- function(sample, parameter = dparameter) {
     inFile <- sample$beded
-    outFile <- paste0(parameter$outputRDS, "mergeReads_", sample$sampleID, ".Rds")
-    if(!(file.exists(outFile))) {
-    lentele <- fread(inFile)
-    i <- table(lentele$V4)
-    goodID <- names(i[i == 1])
-    gLentele <- lentele[V4 %in% goodID, ]
+    outFile1 <- paste0(parameter$outputRDS, "mapped_", sample$sampleID, ".Rds") ######
+    outFile2 <- paste0(parameter$outputRDS, "unmapped_", sample$sampleID, ".Rds")######
+    outFile3 <- paste0(parameter$outputRDS, "allReads_", sample$sampleID, ".Rds")####
+    if(!(file.exists(outFile1))) {
+    gLentele <- fread(inFile)
+    gLentele <- gLentele[!duplicated(gLentele$V4),]
+    goodID <- gLentele$V4
+    #i <- table(lentele$V4)
+    #goodID <- names(i[i == 1])
+    #gLentele <- lentele[V4 %in% goodID, ]
     setnames(gLentele, c("chr", "start", "end", "read", "mapq", "strand")) 
-     dMain <- paste0("zcat ", inFile2, " | paste - - - - | awk '{print ($1), length($3)}'") %>%
+     dMain <- paste0("zcat ", sample$adapter3, " | paste - - - - | awk '{print ($1), length($3)}'") %>%
     fread() %>%
     setkey(V1)
     dMain[, V1:=gsub("^@", "", V1)]
-    full_table <- dMain [V1 %in% goodID] %>%
-    setnames(c("read", "length")) %>%
+        mapped <- dMain %>% filter(V1 %in% goodID) %>%
+    setnames(c("read", "length")) %>% 
     merge(gLentele, "read") %>%
-    setkey(chr, start, strand, length)
-        saveRDS(full_table, outFile)}
-    sample$merge <- outFile
+    setkey(chr, start, strand, length) 
+        unmapped <- dMain %>%
+    anti_join(., mapped, by = "read") 
+    saveRDS(mapped, outFile1)
+    saveRDS(unmapped, outFile2)
+    saveRDS(dMain, outFile3)}
+    sample$mapped <- outFile1
+    sample$unmapped <- outFile2
+    sample$allReads <- outFile3
     return(sample)
 }
 
 
+makeDT <- function(sample, parameter = dparameter) {
+    inFile1 <- sample$mapped 
+    inFile2 <- sample$unmapped
+    inFile3 <- sample$allReads
+    outFile <- paste0(parameter$outputRDS, "fractionDT_", sample$sampleID, ".Rds")
+     if(!(file.exists(outFile))) {
+  mapped <- readRDS(inFile1) %>%
+          select(read, mapq, length) %>% 
+          mutate(is_uniq = if_else(
+                  mapq == 255,
+                  true = "yes",
+                  false = "no"
+    )) %>% select(read, length, is_uniq)
+        
+  unmapped <- readRDS(inFile2) %>%
+          anti_join(., mapped, by = "read") %>% 
+          select(read, length) %>% 
+          mutate(is_uniq = "no")
 
+  star_count <- bind_rows("yes" = mapped,
+                     "no" = unmapped,
+                     .id = "is_mapped")  %>% 
+                mutate(
+                status = case_when(
+                    (is_mapped == "yes" & is_uniq == "yes") ~ "uniqmapped",
+                    (is_mapped == "yes" & is_uniq == "no")  ~ "multimapped",
+                    is_mapped == "no" ~ "unmapped")
+                    )   %>% 
+                mutate(
+                interval_length = case_when(
+                      length <= 30  ~ "-30",
+                      length < 50 ~ "30-50",
+                      length < 100  ~ "50-100",
+                      length < 150 ~ "100-150",
+                      length < 200 ~ "150-200",
+                      length >= 200 ~ "+200")) %>% 
+                count(status, interval_length) %>%
+                setnames(c("status", "interval_length", "galutine_suma"))
+  interval_count <- readRDS(inFile3) %>% 
+                mutate(
+                interval_length = case_when(
+                      length <= 30 ~ "-30",
+                      length < 50 ~ "30-50",
+                      length < 100  ~ "50-100",
+                      length < 150 ~ "100-150",
+                      length < 200 ~ "150-200",
+                      length >= 200 ~ "+200")) %>% 
+                count(interval_length) %>% 
+                setnames(c("interval_length", "pradine_suma"))
+    full_fraction <- star_count %>% merge(interval_count, "interval_length") %>% 
+  mutate(fraction = galutine_suma / pradine_suma ) %>% mutate(meginys = str_extract(
+    sample$sampleID, "\\d{3}R"))
+  saveRDS(full_fraction, outFile) }
+  sample$dt <- outFile
+  return(sample)
+}
 
 ```
 
@@ -196,13 +214,35 @@ samplas <- yaml.load_file("input/samples.yaml")
 for (i in 1:length(samplas)) {
     make_fastq(samplas[[i]])  %>%
         cut_adapter_3() %>% 
-        star_mapping()}
+        star_mapping() %>% 
+        bam_sort() %>%
+        convert_to_bed() %>%
+        mergeLengthReads()}
 
-        make_fastq(samplas[[2]]) %>%
+        make_fastq(samplas[[1]]) %>%
         cut_adapter_3() %>% 
-        star_mapping()
-        
-         %>% bam_sort() %>% 
-        convert_to_bed() %>% mergeLengthReads 
+        star_mapping() %>% bam_sort() %>% 
+        convert_to_bed() %>% mergeLengthReads() %>% makeDT()
 ```
 
+
+
+
+
+
+
+
+```{r}
+outputRDS <- "output/code/prepdata/fileRDS/"
+outFile <- paste0(outpurRDS, "FullTable.Rds")
+        file_names <-
+    fs::dir_ls(outputRDS, regexp = "fractionDT_")
+    dt <- foreach(j = file_names, .combine = 'rbind') %do% {
+        readRDS(j)
+    }
+
+full_fraction$interval_length <- factor(full_fraction$interval_length, 
+    levels = c("-30", "30-50", "50-100", "100-150", "150-200", "+200"))
+ggplot(full_fraction, aes(x = interval_length, y = fraction, color = status, group = status)) + 
+    geom_line() + geom_point()
+```
