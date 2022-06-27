@@ -179,7 +179,8 @@ makeDT <- function(sample, parameter = dparameter) {
                 interval_length = case_when(
                       length <= 30  ~ "-30",
                       length < 50 ~ "30-50",
-                      length < 100  ~ "50-100",
+                      length < 75  ~ "50-75",
+                      length < 100 ~ "75-100",
                       length < 150 ~ "100-150",
                       length < 200 ~ "150-200",
                       length >= 200 ~ "+200")) %>% 
@@ -190,7 +191,8 @@ makeDT <- function(sample, parameter = dparameter) {
                 interval_length = case_when(
                       length <= 30 ~ "-30",
                       length < 50 ~ "30-50",
-                      length < 100  ~ "50-100",
+                      length < 75 ~"50-75",
+                      length < 100  ~ "75-100",
                       length < 150 ~ "100-150",
                       length < 200 ~ "150-200",
                       length >= 200 ~ "+200")) %>% 
@@ -240,7 +242,7 @@ saveRDS(dt, outFile)
 dt <- readRDS(outFile)
 
 dt$interval_length <- factor(dt$interval_length, 
-    levels = c("-30", "30-50", "50-100", "100-150", "150-200", "+200"))
+    levels = c("-30", "30-50", "50-75", "75-100", "100-150", "150-200", "+200"))
 ggplot(dt, aes(x = interval_length, y = fraction, color = status, group = status)) + 
     geom_line() + geom_point() +  facet_grid(rows = vars(meginys)) + theme_bw() + 
       scale_color_brewer(palette = "Dark2")
