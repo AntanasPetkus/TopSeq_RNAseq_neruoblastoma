@@ -19,18 +19,23 @@ mapQuality = 30,
 distanceToCG = 3,
 outdatadir = outdatadir,
 outputRDS = paste0(outdatadir, "fileRDS/"),
+outputK = "output/code/kallisto_prepdata", ## papildomai kallisto analizei
 core = 6,
 path_to_humam_genome = "/scratch/store/annotations/HomoSapiens_hg19/genome/genome.fa",
 path2CG = "/scratch/store/annotations/HomoSapiens_hg19/dCG.RDS",
 minOverlap = 10,
 NumberOfThreads = 20,
 Overhang = 99,
-path_to_humam_genome_star = paste0(outdatadir, "human_genome")
+path_to_humam_genome_star = paste0(outdatadir, "human_genome"),
+path_to_transcripts = "/mnt/store/annotations/HomoSapiens_hg19/kallisto/gencode.v29lift37.transcripts.idx",
+path_to_annotation = "/mnt/store/annotations/HomoSapiens_hg19/kallisto/gencode.v29lift37.annotation.gtf.gz"
 )
 # removeFixed <- c(0, 10, 30, 50)
 #  removeFixed <- c(0, 10, 30, 50, 70, 90) # -u funkcija
 #  removeFixed <- c(101, 76, 51, 41, 31) # --length funkcija
 ```
+
+# Pirminis STAR workflow
 
 ```{r}
 make_fastq <- function(sample, parameter = dparameter) {
@@ -247,4 +252,254 @@ ggplot(dt, aes(x = interval_length, y = fraction, color = status, group = status
     geom_line() + geom_point() +  facet_grid(rows = vars(meginys)) + theme_bw() + 
       scale_color_brewer(palette = "Dark2")
       
+```
+
+# Papildomas testas su --outFilterScoreMinOverLread ir --outFilterMatchNminOverLread 
+
+```{r}
+
+star_mapping30 <- function(sample, parameter = dparameter) {
+  inFile <- sample$adapter3
+  outFile <- paste0(parameter$outdatadir, "star_", sample$sampleID, "Aligned.out.bam")
+  outFile2 <- paste0(parameter$outdatadir, "star_", sample$sampleID)
+   cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads, 
+                      " --genomeDir ", parameter$path_to_humam_genome_star,
+                      " --outSAMtype BAM Unsorted --outFilterScoreMinOverLread 0.3 --outFilterMatchNminOverLread 0.3 --readFilesIn ", inFile,
+                      " --outFileNamePrefix ", outFile2, 
+                      " --readFilesCommand zcat ")
+  if(!(file.exists(paste0(outFile)))) {
+    system(cmd) }
+    sample$star <- outFile
+    return(sample)
+}
+
+convertToFasta <- function(sample, parameter = dparameter) {
+    inFile <- sample$adapter3
+    outFile <- paste0(parameter$outdatadir, "a3_", sample$sampleID, ".fasta")
+    cmd <- paste0("zcat ", inFile, " | sed -n '1~4s/^@/>/p;2~4p' > ", outFile) 
+    if(!(file.exists(paste0(outFile)))) {
+        system(cmd, inter = TRUE)}
+        sample$fasta <- outFile 
+        return(sample)
+}
+
+
+star_mappingFasta30 <- function(sample, parameter = dparameter) {
+  inFile <- sample$fasta
+  outFile <- paste0(parameter$outdatadir, "fastastar30_", sample$sampleID, "Aligned.out.bam")
+  outFile2 <- paste0(parameter$outdatadir, "fastastar30_", sample$sampleID)
+   cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads, 
+                      " --genomeDir ", parameter$path_to_humam_genome_star,
+                      " --outSAMtype BAM Unsorted --outFilterScoreMinOverLread 0.3 --outFilterMatchNminOverLread 0.3 --readFilesIn ", inFile,
+                      " --outFileNamePrefix ", outFile2)
+  if(!(file.exists(paste0(outFile)))) {
+    system(cmd) }
+    sample$fasta30star <- outFile
+    return(sample)
+}
+
+star_mappingFasta60 <- function(sample, parameter = dparameter) {
+  inFile <- sample$fasta                          
+  outFile <- paste0(parameter$outdatadir, "fastastar60_", sample$sampleID, "Aligned.out.bam")
+  outFile2 <- paste0(parameter$outdatadir, "fastastar60_", sample$sampleID)
+   cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads, 
+                      " --genomeDir ", parameter$path_to_humam_genome_star,
+                      " --outSAMtype BAM Unsorted --readFilesIn ", inFile,
+                      " --outFileNamePrefix ", outFile2)
+  if(!(file.exists(paste0(outFile)))) {
+    system(cmd) }
+    sample$fasta60star <- outFile
+    return(sample)
+}
+
+star_mapping60 <- function(sample, parameter = dparameter) {
+  inFile <- sample$adapter3
+  outFile <- paste0(parameter$outdatadir, "star60_", sample$sampleID, "Aligned.out.bam")
+  outFile2 <- paste0(parameter$outdatadir, "star60_", sample$sampleID)
+   cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads, 
+                      " --genomeDir ", parameter$path_to_humam_genome_star,
+                      " --outSAMtype BAM Unsorted --readFilesIn ", inFile,
+                      " --outFileNamePrefix ", outFile2, 
+                      " --readFilesCommand zcat ")
+  if(!(file.exists(paste0(outFile)))) {
+    system(cmd) }
+    sample$star60 <- outFile
+    return(sample)
+}
+
+
+#make_fastq(samplas[[2]]) %>% cut_adapter_3() %>% star_mapping30() %>% convertToFasta() %>% 
+#        star_mappingFasta30() %>% star_mappingFasta60() %>% star_mapping60()
+```
+
+# Transkriptų kvantifikavimo strategija
+
+```{r}
+
+# Meginių vidutinis ilgis (vidurkis)
+outputkallisto <- "output/code/kallisto_prepdata/"
+outputRDS <- "output/code/prepdata/fileRDS/"
+
+ file_names <-
+    fs::dir_ls(outdatadir, regexp = "a3")
+outFile <- paste0(outputRDS, "average_length")
+if(!(file.exists(outFile))) {
+dt <- foreach(i = file_names, .combine='rbind') %do%  {
+        system(paste0("zcat ", i, " |  sed -n '2~4p' | awk '{ print length }' | awk '{ total += $1 } END { print total/NR }'"), inter = TRUE) %>%   
+            as.data.table() %>% mutate(meginys = str_extract(
+    i, "\\d{3}R"))
+}
+dt$. <- as.numeric(dt$.)
+saveRDS(dt, outFile)
+}
+
+ file_names <- 
+    fs::dir_ls(outdatadir, regexp = "a3")
+outFile <- paste0(outputRDS, "standard_deviation")
+if(!(file.exists(outFile))) {
+dt <- foreach(i = file_names, .combine='rbind') %do%  {
+        system(paste0("zcat ", i, " | sed -n '2~4p' | awk '{ print length }' "), inter = TRUE) %>%   
+            unlist() %>% as.numeric() %>% sd() %>% as.data.table() %>% 
+            mutate(meginys = str_extract(
+    i, "\\d{3}R"))
+}
+dt$. <- as.numeric(dt$.)
+saveRDS(dt, outFile)
+}
+
+
+# pavertimas i fasta
+convertToFasta <- function(sample, parameter = dparameter) {
+    inFile <- sample$adapter3
+    outFile <- paste0(parameter$outdatadir, "a3_", sample$sampleID, ".fasta.gz")
+    cmd <- paste0("zcat ", inFile, " | sed -n '1~4s/^@/>/p;2~4p' > ", outFile) 
+    if(!(file.exists(paste0(outFile)))) {
+        system(cmd, inter = TRUE)}
+        sample$fasta <- outFile 
+        return(sample)
+}
+
+
+# Kallisto index
+
+kallisto_index <- function(sample, parameter = dparameter) {
+    inFile <- sample$fasta
+    outFile <- paste0(parameter$outputK, sample$sampleID, ".idx")
+    cmd <- paste0("kallisto index -i ", outFile, " ", inFile)
+    system(cmd)
+    return(sample)
+}
+
+
+kallisto_quant <- function(sample, parameter = dparameter) {
+    inFile <- sample$adapter3
+    outFile <- paste0(parameter$outputK, "/", sample$sampleID) 
+    if(!(file.exists(paste0(outFile)))) {
+    cmd <- paste0("mkdir", parameter$outputK, "/", sample$sampleID)
+    system(cmd)
+    id <- str_extract(sample$sampleID, "\\d{3}R")
+    average_length <- readRDS(paste0(outputRDS, "average_length")) %>% filter(meginys == id) %>% .$.
+    standard_deviation <- readRDS(paste0(outputRDS, "standard_deviation")) %>% filter(meginys == id) %>% .$.
+    cmd <- paste0("kallisto quant -i ", parameter$path_to_transcripts, " -o ", outFile,  " --single -l ", 
+        average_length, " -s ", standard_deviation, " -t 20 --genomebam --gtf ",  parameter$path_to_annotation, 
+        " --verbose ", inFile)
+    system(cmd)
+    }
+    sample$quant <- outFile
+    return(sample)
+}
+
+inFile <- "output/code/kallisto_prepdata/IonTorrent_normoxia_LA15s_001R1_hmC.bed"
+
+bam_sort <- function(sample, parameter = dparameter) {
+    inFile <- paste0(sample$quant, "/pseudoalignments.bam")
+    outFile <- paste0(parameter$outputK, "/", sample$sampleID, "Sorted.bam")
+    cmd <- paste0("samtools sort -@ ", parameter$core, " ", inFile,
+            " | samtools view -b -@ ", parameter$core, 
+           " -o ", outFile, " - ") 
+    if(!(file.exists(outFile))) {
+        system(cmd)
+    cmd2 <- paste0("samtools index ", outFile) 
+        system(cmd2)}
+    sample$sort <- outFile
+    return(sample)
+}
+
+convert_to_bed <- function(sample, parameter = dparameter) {
+    inFile <- parameter$sort
+    outFile <- paste0(parameter$outputK, "/", sample$sampleID, ".bed")
+    cmd <- paste0("bedtools bamtobed -i ", inFile, 
+            " > ", outFile)
+    if(!(file.exists(outFile))) {
+        system(cmd)}
+    sample$beded <- outFile
+    return(sample)
+}
+
+dt <- fread(inFile)
+
+make_fastq(samplas[[1]]) %>% cut_adapter_3() %>% kallisto_quant() %>% bam_sort() %>%
+    convert_to_bed()
+```
+
+# Papildoma analiz4 
+
+```{r}
+# Nemappinti 0.66 readai
+
+unmapped60  <- function(sample, parameter = dparameter) {
+  inFile <- sample$adapter3
+  outFile <- paste0(parameter$outdatadir, "unmapped60_", sample$sampleID, "Aligned.out.bam")
+  outFile2 <- paste0(parameter$outdatadir, "unmapped60_", sample$sampleID)
+   cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads, 
+                      " --genomeDir ", parameter$path_to_humam_genome_star,
+                      " --outSAMtype BAM Unsorted --readFilesIn ", inFile,
+                      " --outFileNamePrefix ", outFile2, 
+                      " --readFilesCommand zcat  --outReadsUnmapped Fastx")
+  if(!(file.exists(paste0(outFile)))) {
+    system(cmd) }
+    sample$unmapped60 <- outFile
+    return(sample)
+}
+
+mapped30 <- function(sample, parameter = dparameter) {
+  inFile <- sample$adapter3
+  outFile <- paste0(parameter$outdatadir, "mapped30_", sample$sampleID, "Aligned.out.bam")
+  outFile2 <- paste0(parameter$outdatadir, "mapped30_", sample$sampleID)
+   cmd <- paste0("STAR --runThreadN ", parameter$NumberOfThreads, 
+                      " --genomeDir ", parameter$path_to_humam_genome_star,
+                      " --outSAMtype BAM Unsorted --outFilterScoreMinOverLread 0.3 --outFilterMatchNminOverLread 0.3 --readFilesIn ", inFile,
+                      " --outFileNamePrefix ", outFile2, 
+                      " --readFilesCommand zcat ")
+  if(!(file.exists(paste0(outFile)))) {
+    system(cmd) }
+    sample$star <- outFile
+    return(sample)
+}
+
+make_fastq(samplas[[1]]) %>% cut_adapter_3() %>% unmapped60() %>% mapped30()
+
+
+
+
+
+## unmapped su standartiniais 
+
+ file_names <-
+    fs::dir_ls(outdatadir, regexp = "Unmapped.out")
+outFile <- paste0(outputRDS, "average_length")
+if(!(file.exists(outFile))) {
+dt <- foreach(i = file_names, .combine='rbind') %do%  {
+        system(paste0("cat ", i, " |  sed -n '2~4p' | awk '{ print length }' | awk '{ total += $1 } END { print total/NR }'"), inter = TRUE) %>%   
+            as.data.table() %>% mutate(meginys = str_extract(
+    i, "\\d{3}R"))
+}
+dt$. <- as.numeric(dt$.)
+saveRDS(dt, outFile)
+}
+
+# kaip mapped30 pasiversti i fasta
+# samtools fasta unmapped60_IonTorrent_normoxia_LA15s_001R1_hmCAligned.out.bam > 
+# unmapped60_IonTorrent_normoxia_LA15s_001R1_hmC.fasta
+
 ```
